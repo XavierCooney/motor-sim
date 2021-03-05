@@ -310,6 +310,8 @@ function render() {
 
 let time_of_last_fps_display = new Date();
 let frames_since_last_fps_display = 0;
+let catchup_time = 0;
+let last_underspeed_displayed = 0;
 
 function frame() {
     if(going) {
@@ -319,11 +321,19 @@ function frame() {
 
         const MAX_ALLOWABLE_DT = 0.05; // 20 FPS
         if(dt > MAX_ALLOWABLE_DT) {
-            document.getElementById('underspeed-warning').style.display = '';
+            catchup_time += dt - MAX_ALLOWABLE_DT;
             dt = MAX_ALLOWABLE_DT;
+
+            if(catchup_time > 0.15) {
+                catchup_time = 0.15;
+                last_underspeed_displayed = last_frame;
+            }
         } else {
-            document.getElementById('underspeed-warning').style.display = 'none';
+            let catchup_used = Math.min(MAX_ALLOWABLE_DT - dt, Math.min(MAX_ALLOWABLE_DT, catchup_time));
+            catchup_time -= catchup_used;
+            dt += catchup_used;
         }
+        catchup_time = Math.max(catchup_time, 0);
 
         params.angle += dt * params.angular_velocity;
         params.angle += Math.PI * 2;
@@ -387,8 +397,9 @@ function frame() {
         // Reset FPS
         time_of_last_fps_display = last_frame;
         frames_since_last_fps_display = 0;
-        document.getElementById('underspeed-warning').style.display = 'none';
+        catchup_time = 0;
     }
+    document.getElementById('underspeed-warning').style.display = (last_frame - last_underspeed_displayed < 500) ? '' : 'none';
     render();
     update_param_display(false);
     requestAnimationFrame(frame);
