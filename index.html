@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XavMotors</title>
+<style>
+    #outer {
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+    }
+    button {
+        padding: 10px;
+        margin: 5px;
+        font-size: larger;
+    }
+    #input-set {
+        display: flex;
+        flex-flow: wrap;
+        justify-content: center;
+    }
+    #input-set label, #input-set button {
+        display: inline-block;
+        margin: 5px;
+        padding: 5px;
+        border-radius: 5px;
+        border: 1px solid black;
+    }
+    body {
+        font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
+        width: 100%;
+        margin: 0px;
+        padding-left: 1em;
+        padding-right: 1em;
+    }
+    * {
+        box-sizing: border-box;
+        font-variant-numeric: tabular-nums;
+    }
+    h1, h5, #computed-params, #caveats {
+        text-align: center;
+    }
+    #computed-params, #caveats {
+        padding: 6px;
+    }
+    canvas {
+        width: 58%;
+        margin-left: 22%;
+        border: 1px solid black;
+        border-radius: 3px;
+        margin-bottom: 4px;
+    }
+    #caveats {
+        /* width: 65%; */
+        border: 1px solid black;
+        margin-bottom: 20px;
+    }
+    #underspeed-warning {
+        font-weight: bold;
+        color: #E33;
+    }
+</style>
+</head>
+<body>
+<h1>Xavier's Motor Simulator</h1>
+<!-- <h5>&copy; Xavier Cooney 2021</h5> -->
+<div id="outer">
+    <div class="row" id="input-set">
+        <label>Length of conductor in magnetic field (m) <input id="input-conductor_length" type="number" step="0.1"></label>
+        <label>Current through conductor (A) <input id="input-conductor_current" type="number" step="0.1"></label>
+        <label>Mass of rod (kg) <input id="input-mass" type="number" step="0.1"></label>
+        <label>Rod length (m) <input id="input-rod_length" type="number" step="0.1"></label>
+        <label>Angular Velocity (rad/s) <input id="input-angular_velocity" type="number" step="0.1"></label>
+        <label>Angle about pivot (rad) <input id="input-angle" type="number" step="0.1"></label>
+        <label>Magnetic field strength (Tesla) <input id="input-b_field" type="number" step="0.1"></label>
+        <label>Magnetic field angle (rad) <input id="input-b_field_angle" type="number" step="0.1"></label>
+        <label>Mechanical resistance constant <input id="input-friction" type="number" step="0.1"></label>
+        <label>Control System
+            <select id="control-sys-select">
+                <option id="control-opt-none">None</option>
+                <option id="control-opt-brushed-clock">Two-pole brushed DC clockwise</option>
+                <option id="control-opt-brushed-counter-clock">Two-pole brushed DC anti-clockwise</option>
+                <option id="control-opt-rotating-b">Constant rotating magnetic field</option>
+                <option id="control-opt-magnetic-clock">Clockwise flipping magnetic DC</option>
+            </select>
+        </label>
+        <button id="pause-play-btn"></button>
+        <button id="reload-play-btn">Reset All</button>
+    </div>
+    <div class="row">
+        <canvas id="canv"></canvas>
+    </div>
+    <div class="row" id="computed-params">
+        &nbsp;
+        Computed parameters: <span id="fps-counter"></span>, <span id="torque-value"></span>, <span id="moment-inertia-value"></span>
+    </div>
+    <div class="row" id="caveats">
+        &copy; <i>Xavier Cooney</i> 2021
+        <div id="underspeed-warning" style="display: none;">
+            Warning! The simulation is not running in real-time because of insufficient computational resources.
+        </div>
+        <p>
+            Note that the <span style="color: #C33">red arrows</span> indicate the direction of the force only,
+            but not magnitude, so they won't change in length when you change the current, conductor length, nor field strength.
+            Similarly, the <span style="color: #3C3">green arrows</span> showing the external magnetic
+            field will not change in density based on the field strength, and only show direction.
+            The <span style="font-weight: bold;">mechanical&nbsp;resistance&nbsp;coefficient</span> probably isn't
+            entirely accurate. It's just an additional exponential decay term: dω/dt = &minus;kω, which should act somewhat
+            similar to air resistance at slow speeds. The moment of inertia calculations are probably a bit wrong because doing
+            the required integration over the rectangular shape was difficult. Apart from that, all other aspects of the
+            simulation should be physically accurate and in real-time.
+        </p>
+        <p>
+            For more information, check out <a href="https://xaviercooney.github.io/xavc/" target="_blank">my homepage</a>.
+        </p>
+    </div>
+</div>
+<script>
+const WIDTH = 600;
+const CENTRE = WIDTH / 2;
+const MOTOR_LENGTH = 220;
+const MOTOR_WIDTH = 20;
+
+canv.width = WIDTH;
+canv.height = WIDTH;
+
+/** @type {CanvasRenderingContext2D} */
+let ctx = canv.getContext('2d');
+
+let default_params = {
+    mass: 0.035,
+    conductor_length: 0.1,
+    conductor_current: 2.0,
+    angular_velocity: 0,
+    rod_length: 0.5,
+    angle: 0,
+    b_field: 0.2,
+    b_field_angle: 0,
+    friction: 2.5
+};
+let modifiable_while_going = {
+    mass: true,
+    conductor_length: true,
+    rod_length: true,
+    // b_field: true,
+    // b_field_angle: true,
+    friction: true,
+}
+
+let params = Object.assign({}, default_params);
+
+function update_param_display(initial) {
+    for(let param_name in params) {
+        let element = document.getElementById(`input-${param_name}`);
+
+        if((going && !modifiable_while_going[param_name]) || initial) {
+            element.value = params[param_name].toFixed(3);
+        } else {
+            params[param_name] = parseFloat(element.value);
+            if(isNaN(params[param_name])) {
+                params[param_name] = default_params[param_name];
+            }
+        }
+    }
+}
+
+let going = false;
+
+function update_going_status() {
+    document.getElementById('pause-play-btn').innerText = going ? 'Pause' : 'Start';
+    for(let param_name in params) {
+        if(!modifiable_while_going[param_name]) {
+            document.getElementById(`input-${param_name}`).disabled = going;
+        }
+    }
+    if(going) {
+        update_param_display(true);
+    }
+}
+
+let last_frame = +(new Date());
+
+function rotate_pos(original, angle) {
+    angle *= -1;
+    return [
+        Math.cos(angle) * original[0] - Math.sin(angle) * original[1],
+        Math.sin(angle) * original[0] + Math.cos(angle) * original[1],
+    ];
+}
+function rotate_with_motor(original) {
+    return rotate_pos(original, params.angle);
+}
+
+function draw_arrow_head(position, angle, length) {
+    for(let offset of [Math.PI / 5, -Math.PI / 5]) {
+        let direction = rotate_pos([length, 0], angle + offset);
+        ctx.save();
+        ctx.lineCap = 'round';
+
+        ctx.beginPath();
+        ctx.moveTo(position[0], position[1]);
+        ctx.lineTo(position[0] - direction[0], position[1] - direction[1]);
+        ctx.stroke();
+
+        ctx.restore();
+    }
+}
+
+function render() {
+    ctx.save();
+
+    ctx.clearRect(0, 0, WIDTH, WIDTH);
+
+    let rotated_0 = rotate_with_motor([MOTOR_LENGTH, 0]);
+    let rotated_1 = rotate_with_motor([MOTOR_LENGTH, MOTOR_WIDTH]);
+    let rotated_2 = rotate_with_motor([MOTOR_LENGTH, -MOTOR_WIDTH]);
+
+    let polarity_reversed = params.conductor_current < 0;
+
+    ctx.save();
+    ctx.strokeStyle = '#3C3';
+
+    const TOTAL_FIELD_LINES = 10;
+    for(let line_num = -TOTAL_FIELD_LINES; line_num <= 2 * TOTAL_FIELD_LINES; ++line_num) {
+        let y = line_num / (TOTAL_FIELD_LINES + 1) * WIDTH;
+        let field_line_part_0 = rotate_pos([-WIDTH, y - CENTRE], params.b_field_angle);
+        let field_line_part_1 = rotate_pos([WIDTH, y - CENTRE], params.b_field_angle);
+        ctx.beginPath();
+        ctx.moveTo(CENTRE + field_line_part_0[0], CENTRE + field_line_part_0[1]);
+        ctx.lineTo(CENTRE + field_line_part_1[0], CENTRE + field_line_part_1[1]);
+        ctx.stroke();
+
+        for(let arrow_num = -4; arrow_num <= 5; ++arrow_num) {
+            let arrow_pos = rotate_pos([arrow_num * WIDTH / 4 - CENTRE - WIDTH / 3, y - CENTRE], params.b_field_angle);
+            draw_arrow_head([arrow_pos[0] + CENTRE, arrow_pos[1] + CENTRE], params.b_field_angle, 20);
+        }
+    }
+
+    ctx.restore();
+
+    ctx.fillStyle = '#FFFFFF';
+
+    ctx.beginPath();
+    ctx.moveTo(CENTRE - rotated_2[0], CENTRE - rotated_2[1]);
+    ctx.lineTo(rotated_1[0] + CENTRE, rotated_1[1] + CENTRE);
+    ctx.lineTo(rotated_2[0] + CENTRE, rotated_2[1] + CENTRE);
+    ctx.lineTo(CENTRE - rotated_1[0], CENTRE - rotated_1[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(CENTRE, CENTRE, MOTOR_WIDTH / 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(CENTRE + rotated_0[0], CENTRE + rotated_0[1], MOTOR_WIDTH, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(CENTRE - rotated_0[0], CENTRE - rotated_0[1], MOTOR_WIDTH, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#000';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.font = `20px monospace`;
+
+    ctx.fillText(polarity_reversed ? 'x' : '.', CENTRE + rotated_0[0], CENTRE + rotated_0[1]);
+    ctx.fillText(polarity_reversed ? '.' : 'x', CENTRE - rotated_0[0], CENTRE - rotated_0[1]);
+
+    ctx.save();
+    ctx.strokeStyle = '#C33';
+    ctx.lineWidth = 4;
+    // ctx.lineCap = 'round';
+
+    for(let bob of [1, -1]) {
+        let bob_angle = params.b_field_angle + bob * Math.PI / 2;
+        if(polarity_reversed) {
+            bob_angle += Math.PI;
+        }
+
+        let force_direction = rotate_pos([1, 0], bob_angle);
+
+        ctx.beginPath();
+        ctx.moveTo(
+            CENTRE + bob * rotated_0[0] + force_direction[0] * MOTOR_WIDTH,
+            CENTRE + bob * rotated_0[1] + force_direction[1] * MOTOR_WIDTH,
+        );
+        ctx.lineTo(
+            CENTRE + bob * rotated_0[0] + force_direction[0] * (MOTOR_WIDTH + 60),
+            CENTRE + bob * rotated_0[1] + force_direction[1] * (MOTOR_WIDTH + 60),
+        );
+        ctx.stroke();
+        draw_arrow_head(
+            [
+                CENTRE + bob * rotated_0[0] + force_direction[0] * (MOTOR_WIDTH + 60),
+                CENTRE + bob * rotated_0[1] + force_direction[1] * (MOTOR_WIDTH + 60)
+            ], bob_angle, 15
+        );
+    }
+    ctx.restore();
+
+    ctx.restore();
+}
+
+let time_of_last_fps_display = new Date();
+let frames_since_last_fps_display = 0;
+
+function frame() {
+    if(going) {
+        let this_frame = +(new Date());
+        let dt = (this_frame - last_frame) / 1000;
+        last_frame = this_frame;
+
+        const MAX_ALLOWABLE_DT = 0.05; // 20 FPS
+        if(dt > MAX_ALLOWABLE_DT) {
+            document.getElementById('underspeed-warning').style.display = '';
+            dt = MAX_ALLOWABLE_DT;
+        } else {
+            document.getElementById('underspeed-warning').style.display = 'none';
+        }
+
+        params.angle += dt * params.angular_velocity;
+        params.angle += Math.PI * 2;
+        params.angle %= Math.PI * 2;
+        params.angular_velocity -= params.angular_velocity * dt * params.friction;
+
+        let control_mode_selected = document.getElementById('control-sys-select').selectedOptions[0];
+        let control_mode = control_mode_selected ? control_mode_selected.id : '?';
+
+        let cos_of_angle_in_field = Math.cos(params.angle - params.b_field_angle);
+        if(control_mode == 'control-opt-brushed-clock') {
+            if(cos_of_angle_in_field < 0) {
+                params.conductor_current = -Math.abs(params.conductor_current);
+            } else {
+                params.conductor_current = Math.abs(params.conductor_current);
+            }
+        } else if(control_mode == 'control-opt-brushed-counter-clock') {
+            if(cos_of_angle_in_field <= 0) {
+                params.conductor_current = Math.abs(params.conductor_current);
+            } else {
+                params.conductor_current = -Math.abs(params.conductor_current);
+            }
+        } else if(control_mode == 'control-opt-rotating-b') {
+            params.b_field_angle += Math.PI * 2 * dt / 13;
+        } else if(control_mode == 'control-opt-magnetic-clock') {
+            if(cos_of_angle_in_field < 0) {
+                params.b_field_angle += Math.PI;
+            } else if(cos_of_angle_in_field > 0) {
+                // params.conductor_current = Math.abs(params.conductor_current);
+            }
+        }
+
+        if(params.b_field < 0) {
+            params.b_field = Math.abs(params.b_field);
+            params.b_field_angle += Math.PI;
+        }
+        params.b_field_angle += Math.PI * 2;
+        params.b_field_angle %= Math.PI * 2;
+
+        // https://en.wikipedia.org/wiki/List_of_moments_of_inertia
+        let moment_of_inertia = 2 * params.mass * (params.rod_length * params.rod_length / 12 + params.conductor_length * params.conductor_length / 2);
+        let total_torque = 2 * params.b_field * params.conductor_current * params.conductor_length * 1 * params.rod_length * Math.sin(Math.PI / 2 + params.angle - params.b_field_angle);
+        params.angular_velocity += dt * total_torque / moment_of_inertia;
+
+        document.getElementById('computed-params').style.display = '';
+        document.getElementById('torque-value').innerHTML = `torque:&nbsp;${total_torque.toFixed(6)}&nbsp;N&centerdot;m`;
+        document.getElementById('moment-inertia-value').innerHTML = `moment&nbsp;of&nbsp;inertia:&nbsp;${moment_of_inertia.toFixed(7)}&nbsp;kg&centerdot;m<sup>2</sup>`;
+
+        if(last_frame - time_of_last_fps_display > 500 && frames_since_last_fps_display > 0) {
+            let time_interval = (last_frame - time_of_last_fps_display) / 1000;
+            let fps = frames_since_last_fps_display / time_interval;
+            document.getElementById('fps-counter').innerText = `FPS: ${fps.toFixed(1)}`;
+            time_of_last_fps_display = last_frame;
+            frames_since_last_fps_display = 1;
+        } else {
+            frames_since_last_fps_display++;
+        }
+    } else {
+        document.getElementById('computed-params').style.display = 'none';
+        last_frame = +(new Date());
+        // Reset FPS
+        time_of_last_fps_display = last_frame;
+        frames_since_last_fps_display = 0;
+        document.getElementById('underspeed-warning').style.display = 'none';
+    }
+    render();
+    update_param_display(false);
+    requestAnimationFrame(frame);
+}
+update_param_display(true);
+frame();
+
+update_going_status();
+
+document.getElementById('pause-play-btn').addEventListener('click', e => {
+    going = !going;
+
+    update_going_status();
+});
+
+document.getElementById('reload-play-btn').addEventListener('click', e => {
+    window.location.reload();
+});
+</script>
+</body>
+</html>
