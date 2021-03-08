@@ -70,6 +70,7 @@
     <div class="row" id="input-set">
         <label>Length of conductor in magnetic field (m) <input id="input-conductor_length" type="number" step="0.1"></label>
         <label>Current through conductor (A) <input id="input-conductor_current" type="number" step="0.1"></label>
+        <label>Number of loops in coil <input id="input-turns" type="number" step="0.1"></label>
         <label>Mass of rod (kg) <input id="input-mass" type="number" step="0.1"></label>
         <label>Rod length (m) <input id="input-rod_length" type="number" step="0.1"></label>
         <label>Angular Velocity (rad/s) <input id="input-angular_velocity" type="number" step="0.1"></label>
@@ -132,13 +133,14 @@ let ctx = canv.getContext('2d');
 let default_params = {
     mass: 0.035,
     conductor_length: 0.1,
-    conductor_current: 2.0,
+    conductor_current: 2,
     angular_velocity: 0,
     rod_length: 0.5,
     angle: 0,
-    b_field: 0.2,
+    b_field: 0.01,
     b_field_angle: 0,
-    friction: 2.5
+    friction: 2.5,
+    turns: 40
 };
 let modifiable_while_going = {
     mass: true,
@@ -375,7 +377,7 @@ function frame() {
 
         // https://en.wikipedia.org/wiki/List_of_moments_of_inertia
         let moment_of_inertia = 2 * params.mass * (params.rod_length * params.rod_length / 12 + params.conductor_length * params.conductor_length / 2);
-        let total_torque = 2 * params.b_field * params.conductor_current * params.conductor_length * 1 * params.rod_length * Math.sin(Math.PI / 2 + params.angle - params.b_field_angle);
+        let total_torque = 2 * params.turns * params.b_field * params.conductor_current * params.conductor_length / 2 * 1 * params.rod_length * Math.sin(Math.PI / 2 + params.angle - params.b_field_angle);
         params.angular_velocity += dt * total_torque / moment_of_inertia;
 
         document.getElementById('computed-params').style.display = '';
